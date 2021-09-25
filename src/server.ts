@@ -1,28 +1,45 @@
 import express from 'express';
-import router from './lib/router';
-import path from 'path';
+import { createPageRenderer } from 'vite-plugin-ssr';
+import vite from 'vite';
 
-const { PORT = 3001 } = process.env;
+// https://github.com/brillout/vite-plugin-ssr/blob/master/boilerplates/boilerplate-vue/server/index.js
 
-const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
+const root = `${__dirname}/..`;
 
-// Middleware that parses json and looks at requests where the Content-Type header matches the type option.
-app.use(express.json());
+async function startServer() {
+  const app = express();
 
-// Serve API requests from the router
-app.use('/api', router);
+  let viteDevServer;
+  if (isProduction) {
+    app.use(express.static(`${root}/dist/client`));
+  } else {
+    viteDevServer = await vite.createServer({
+      root,
+      server: { middlewareMode: true },
+    });
+    app.use(viteDevServer.middlewares);
+  }
 
-// Serve storybook production bundle
-app.use('/storybook', express.static('dist/storybook'));
+  // Serve storybook production bundle
+  app.use('/storybook', express.static('dist/storybook'));
 
-// Serve app production bundle
-app.use(express.static('dist/app'));
+  const renderPage = createPageRenderer({ viteDevServer, isProduction, root });
+  app.get('*', async (req, res, next) => {
+    const url = req.originalUrl;
+    const pageContextInit = {
+      url,
+    };
+    const pageContext = await renderPage(pageContextInit);
+    const { httpResponse } = pageContext;
+    if (!httpResponse) return next();
+    const { statusCode, body } = httpResponse;
+    res.status(statusCode).send(body);
+  });
 
-// Handle client routing, return all requests to the app
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'app/index.html'));
-});
+  const port = process.env.PORT || 3001;
+  app.listen(port);
+  console.log(`Server running at http://localhost:${port}`);
+}
 
-app.listen(PORT, () => {
-  console.log(`Server listening at http://localhost:${PORT}`);
-});
+startServer();
